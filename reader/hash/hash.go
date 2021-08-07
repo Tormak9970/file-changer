@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/SWTOR-Slicers/tor-reader/logger"
+	"github.com/Tormak9970/file-changer/logger"
 )
 
 type FileId struct {
