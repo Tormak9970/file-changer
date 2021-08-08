@@ -27,12 +27,12 @@ func main() {
 	zipFilePath := ""
 	comprCmd := ""
 	if len(os.Args) >= 5 {
-		// err := json.Unmarshal([]byte(os.Args[1]), &torFiles)
-		// if err != nil {
-		// 	fmt.Println(err)
-		// }
-		tempRes := string([]byte(os.Args[1]))
-		torFiles = append(torFiles, tempRes)
+		err := json.Unmarshal([]byte(os.Args[1]), &torFiles)
+		if err != nil {
+			fmt.Println(err)
+		}
+		// tempRes := string([]byte(os.Args[1]))
+		// torFiles = append(torFiles, tempRes)
 
 		hashPath = os.Args[2]
 		err2 := json.Unmarshal([]byte(os.Args[3]), &backupObj)
@@ -81,7 +81,7 @@ func main() {
 		}
 	}
 
-	var nodeHashes map[string]interface{}
+	nodeHashes := make(map[string]bool)
 	for i := 0; i < 500; i++ {
 		fileName := "/resources/systemgenerated/buckets/" + strconv.Itoa(i) + ".bkt"
 		litHashes := hash.FromFilePath(fileName, 0)
@@ -101,7 +101,7 @@ func main() {
 	relInf := tor.RelivantInfo{BackupObj: backupObj, FileChanges: fileChanges, ComprCmd: comprCmd, ZipReader: zipReader, FilesNoHash: 0, FilesAttempted: 0, NumNodeChanges: len(fileChanges.Nodes), NumFileChanges: len(fileChanges.Files), NumChanges: len(fileChanges.Nodes) + len(fileChanges.Files), NumNodesSuccessful: 0, NumFilesSuccessful: 0, NumSuccessful: 0, TmpIdxSub: tmpIdxSub}
 
 	s1 := time.Now()
-	tor.ReadAll(torFiles, hashes, nodeHashes, relInf)
+	relInf = tor.ReadAll(torFiles, hashes, nodeHashes, relInf)
 	d1 := time.Now().Sub(s1)
 	log.Println("duration", fmt.Sprintf("%s", d1))
 

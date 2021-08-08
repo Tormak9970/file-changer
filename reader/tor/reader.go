@@ -97,7 +97,7 @@ func checkNodeMatches(changes []NodeChange, gomName string) (NodeChange, bool) {
 
 func zlipCompress(buff []byte, output string, filename string, cmd string) ([]byte, error) {
 	var out []byte
-	tmp1 := output + filename + ".tmp"
+	tmp1 := output + "\\" + filename + ".tmp"
 
 	err := os.MkdirAll(output, os.ModePerm)
 	if err != nil {
@@ -107,8 +107,12 @@ func zlipCompress(buff []byte, output string, filename string, cmd string) ([]by
 	if err2 != nil {
 		log.Panicln(err2)
 	}
-	tmp2, err3 := exec.Command(cmd, tmp1).Output()
+	stderr := new(bytes.Buffer)
+	command := exec.Command(cmd, tmp1)
+	command.Stderr = stderr
+	tmp2, err3 := command.Output()
 	if err3 != nil {
+		log.Println(stderr.String())
 		log.Panicln(err3)
 	}
 	var err4 error
@@ -191,6 +195,14 @@ func fCopy(src, dst string) (int64, error) {
 	}
 	return 0, err
 }
+func inArr(arr []uint64, val uint64) bool {
+	for _, v := range arr {
+		if v == val {
+			return true
+		}
+	}
+	return false
+}
 
 func (tor *torStruct) fileListAppend(data TorArchiveStruct) {
 	tor.mutex.Lock()
@@ -203,38 +215,33 @@ func (tor *nodeTorStruct) NodeListAppend(key string, data TorFile) {
 	tor.mutex.Unlock()
 }
 
-func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]interface{}, relInfo RelivantInfo) ([]TorArchiveStruct, map[string]TorFile) {
-	pool := workerpool.New(runtime.NumCPU())
+var relInfo RelivantInfo
 
-	tor := torStruct{}
-	nodeTor := nodeTorStruct{}
+func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]bool, relInf RelivantInfo) RelivantInfo {
+	relInfo = relInf
+	pool := workerpool.New(runtime.NumCPU())
 
 	for _, torName := range torNames {
 		torName := torName
 
 		if strings.Contains(torName, "main_global_1.tor") {
 			pool.Submit(func() {
-				readNodeTor(torName, &nodeTor, &tor, nodeHashes, relInfo)
+				readNodeTor(torName, nodeHashes)
 			})
 		} else {
 			pool.Submit(func() {
-				read(torName, &tor, hashes, relInfo)
+				read(torName, hashes)
 			})
 		}
 	}
 	pool.StopWait()
 
-	return tor.fileList, nodeTor.fileList
+	return relInfo
 }
 
-func Read(torName string, hashes map[uint64]hash.HashData, relInfo RelivantInfo) []TorArchiveStruct {
-	tor := torStruct{}
-	read(torName, &tor, hashes, relInfo)
-	return tor.fileList
-}
-
-func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relInfo RelivantInfo) {
+func read(torName string, hashes map[uint64]hash.HashData) {
 	if relInfo.NumFilesSuccessful == relInfo.NumFileChanges {
+		fmt.Println("exit 1")
 		return
 	}
 	archive := TorArchiveStruct{}
@@ -262,6 +269,8 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 
 	var runAfter []TorFile
 	var runAfterZipEntrs []reader.ZipEntry
+
+	foundHashes := make([]uint64, 0)
 
 	for fileTableOffset != 0 {
 		archive.NumTables++
@@ -292,7 +301,6 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 			fileData.CRC = fileData.Checksum
 			fileData.TorFile = torName
 			fileData.TableIdx = i
-			archive.FileList = append(archive.FileList, fileData)
 			lastFile = int(i)
 
 			restorePos, _ := swReader.Seek(0, 1)
@@ -302,12 +310,19 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 				hashData := hashData
 				fileData := fileData
 				if fChng, fndChng := checkFileMatch(relInfo.FileChanges.Files, hashData); fndChng && relInfo.NumFilesSuccessful < relInfo.NumFileChanges {
+					if inArr(foundHashes, fileData.FileID) {
+						zeros := make([]byte, 34)
+						swReader.WriteAt(zeros, fileData.HeaderOffset)
+						continue
+					} else {
+						foundHashes = append(foundHashes, fileData.FileID)
+					}
 					swReader.Seek(0, 0)
 					if relInfo.BackupObj.Backup && !hasBackedUp {
 						fCopy(fileData.TorFile, relInfo.BackupObj.Path+fileData.TorFile[strings.LastIndex(fileData.TorFile, "\\"):])
 						hasBackedUp = true
 					}
-					log.Println("Found file. File num", relInfo.NumSuccessful+1)
+					log.Println("Found file. File num", relInfo.NumSuccessful)
 					relInfo.NumSuccessful++
 					relInfo.NumFilesSuccessful++
 
@@ -370,6 +385,7 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 						log.Panicln("Expected 0 or 1 but got", fileData.CompressionMethod)
 					}
 
+					fmt.Println(relInfo.NumSuccessful, relInfo.NumChanges)
 					if !hasInserted {
 						runAfter = append(runAfter, fileData)
 						runAfterZipEntrs = append(runAfterZipEntrs, zipEntr)
@@ -378,7 +394,6 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 							break
 						}
 					}
-					fmt.Println(relInfo.NumSuccessful, relInfo.NumChanges)
 				}
 			} else {
 				relInfo.FilesNoHash++
@@ -395,8 +410,6 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 
 	for k, fileData := range runAfter {
 		zipEntr := runAfterZipEntrs[k]
-		curTmp, _ := swReader.Seek(0, 1)
-		fmt.Println(curTmp)
 		if archive.LastTableNumFiles+1 >= 1000 {
 			newLastOffset, _ := swReader.Seek(0, 2)
 
@@ -470,19 +483,14 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 		binary.LittleEndian.PutUint16(compTypeBytes, fileData.CompressionMethod)
 		swReader.Write(compTypeBytes)
 	}
-
-	tor.fileListAppend(archive)
 }
-func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, nodeHashes map[string]interface{}, relInfo RelivantInfo) {
+func readNodeTor(torName string, nodeHashes map[string]bool) {
 	if relInfo.NumNodeChanges == 0 {
 		return
 	}
 
 	archive := TorArchiveStruct{}
 	archive.Name = torName
-	if tor.fileList == nil {
-		tor.fileList = map[string]TorFile{}
-	}
 	f, err := os.OpenFile(torName, os.O_RDWR, os.ModePerm)
 
 	defer f.Close()
@@ -532,7 +540,8 @@ func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, nodeHashes
 			nData.CRC = nData.Checksum
 			nData.TorFile = torName
 			key := strconv.Itoa(int(nData.PrimaryHash)) + "|" + strconv.Itoa(int(nData.SecondaryHash))
-			tor.NodeListAppend(key, nData)
+
+			oldPos, _ := swReader.Seek(0, 1)
 
 			if relInfo.NumNodeChanges != 0 {
 				if relInfo.BackupObj.Backup && !hasBackedUp {
@@ -556,7 +565,6 @@ func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, nodeHashes
 
 					for pos, _ := swReader.Seek(0, 1); pos < int64(endOffset); j++ {
 						nodeOffset, _ := swReader.Seek(0, 1)
-						fmt.Println(nodeOffset)
 						nodeSize := swReader.ReadUInt32()
 						if nodeSize == 0 {
 							break
@@ -585,7 +593,7 @@ func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, nodeHashes
 
 						swReader.ReadUInt16() //uncompressedOffset
 						if nChng, fndC := checkNodeMatches(relInfo.FileChanges.Nodes, gomName); fndC {
-							fmt.Println("Found Node!")
+							//fmt.Println("Found Node!")
 							relInfo.NumSuccessful++
 							relInfo.NumNodesSuccessful++
 
@@ -653,7 +661,8 @@ func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, nodeHashes
 					relInfo.FilesNoHash++
 				}
 			}
+
+			swReader.Seek(oldPos, 0)
 		}
 	}
-	gTor.fileListAppend(archive)
 }
