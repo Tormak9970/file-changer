@@ -203,7 +203,7 @@ func (tor *nodeTorStruct) NodeListAppend(key string, data TorFile) {
 	tor.mutex.Unlock()
 }
 
-func ReadAll(torNames []string, hashes map[uint64]hash.HashData, relInfo RelivantInfo) ([]TorArchiveStruct, map[string]TorFile) {
+func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]interface{}, relInfo RelivantInfo) ([]TorArchiveStruct, map[string]TorFile) {
 	pool := workerpool.New(runtime.NumCPU())
 
 	tor := torStruct{}
@@ -214,7 +214,7 @@ func ReadAll(torNames []string, hashes map[uint64]hash.HashData, relInfo Relivan
 
 		if strings.Contains(torName, "main_global_1.tor") {
 			pool.Submit(func() {
-				readNodeTor(torName, &nodeTor, &tor, hashes, relInfo)
+				readNodeTor(torName, &nodeTor, &tor, nodeHashes, relInfo)
 			})
 		} else {
 			pool.Submit(func() {
@@ -473,19 +473,23 @@ func read(torName string, tor *torStruct, hashes map[uint64]hash.HashData, relIn
 
 	tor.fileListAppend(archive)
 }
-func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, hashes map[uint64]hash.HashData, relInfo RelivantInfo) {
+func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, nodeHashes map[string]interface{}, relInfo RelivantInfo) {
+	if relInfo.NumNodeChanges == 0 {
+		return
+	}
+
 	archive := TorArchiveStruct{}
 	archive.Name = torName
 	if tor.fileList == nil {
 		tor.fileList = map[string]TorFile{}
 	}
-	f, err := os.Open(torName)
+	f, err := os.OpenFile(torName, os.O_RDWR, os.ModePerm)
 
 	defer f.Close()
 	logger.Check(err)
 
-	reader := reader.SWTORReader{File: f}
-	magicNumber := reader.ReadUInt32()
+	swReader := reader.SWTORReader{File: f}
+	magicNumber := swReader.ReadUInt32()
 
 	if magicNumber != 0x50594D {
 		fmt.Println("Not MYP File")
@@ -493,39 +497,162 @@ func readNodeTor(torName string, tor *nodeTorStruct, gTor *torStruct, hashes map
 
 	f.Seek(12, 0)
 
-	fileTableOffset := reader.ReadUInt64()
+	fileTableOffset := swReader.ReadUInt64()
 
 	namedFiles := 0
 
+	hasBackedUp := false
+
 	for fileTableOffset != 0 {
 		f.Seek(int64(fileTableOffset), 0)
-		numFiles := int32(reader.ReadUInt32())
-		fileTableOffset = reader.ReadUInt64()
+		numFiles := int32(swReader.ReadUInt32())
+		fileTableOffset = swReader.ReadUInt64()
 		namedFiles += int(numFiles)
 		placeHolder := TorFile{}
 		placeHolder.TorFile = torName
 		for i := int32(0); i < numFiles; i++ {
 			//fmt.Println(i, numFiles)
-			offset := reader.ReadUInt64()
+			offset := swReader.ReadUInt64()
 			if offset == 0 {
 				f.Seek(26, 1)
 				continue
 			}
-			info := TorFile{}
-			info.HeaderSize = reader.ReadUInt32()
-			info.Offset = offset
-			info.CompressedSize = reader.ReadUInt32()
-			info.UnCompressedSize = reader.ReadUInt32()
+			nData := TorFile{}
+			nData.HeaderSize = swReader.ReadUInt32()
+			nData.Offset = offset
+			nData.CompressedSize = swReader.ReadUInt32()
+			nData.UnCompressedSize = swReader.ReadUInt32()
 			current_position, _ := f.Seek(0, 1)
-			info.SecondaryHash = reader.ReadUInt32()
-			info.PrimaryHash = reader.ReadUInt32()
+			nData.SecondaryHash = swReader.ReadUInt32()
+			nData.PrimaryHash = swReader.ReadUInt32()
 			f.Seek(current_position, 0)
-			info.FileID = reader.ReadUInt64()
-			info.Checksum = reader.ReadUInt32()
-			info.CompressionMethod = reader.ReadUInt16()
-			info.CRC = info.Checksum
-			info.TorFile = torName
-			tor.NodeListAppend(strconv.Itoa(int(info.PrimaryHash))+"|"+strconv.Itoa(int(info.SecondaryHash)), info)
+			nData.FileID = swReader.ReadUInt64()
+			nData.Checksum = swReader.ReadUInt32()
+			nData.CompressionMethod = swReader.ReadUInt16()
+			nData.CRC = nData.Checksum
+			nData.TorFile = torName
+			key := strconv.Itoa(int(nData.PrimaryHash)) + "|" + strconv.Itoa(int(nData.SecondaryHash))
+			tor.NodeListAppend(key, nData)
+
+			if relInfo.NumNodeChanges != 0 {
+				if relInfo.BackupObj.Backup && !hasBackedUp {
+					fCopy(archive.Name, relInfo.BackupObj.Path+archive.Name[strings.LastIndex(archive.Name, "\\"):])
+				}
+
+				if _, ok := nodeHashes[key]; ok {
+					relInfo.FilesAttempted++
+
+					oldPos, _ := swReader.Seek(int64(nData.Offset), 0)
+					dblbOffset := nData.Offset + uint64(nData.HeaderSize) + 24
+
+					swReader.Seek(int64(dblbOffset), 0)
+					dblbSize := swReader.ReadUInt32()
+					swReader.ReadUInt32() //dblb header
+					swReader.ReadUInt32() //dblb version
+
+					endOffset := nData.Offset + uint64(nData.HeaderSize) + 28 + uint64(dblbSize)
+
+					var j int
+
+					for pos, _ := swReader.Seek(0, 1); pos < int64(endOffset); j++ {
+						nodeOffset, _ := swReader.Seek(0, 1)
+						fmt.Println(nodeOffset)
+						nodeSize := swReader.ReadUInt32()
+						if nodeSize == 0 {
+							break
+						}
+						swReader.ReadUInt32()
+						swReader.ReadUInt32() //idLo
+						swReader.ReadUInt32() //idHi
+
+						swReader.ReadUInt16() //type
+						dataOffset := swReader.ReadUInt16()
+
+						nameOffset := swReader.ReadUInt16()
+						gomName := readGOMString(swReader, uint64(nodeOffset)+uint64(nameOffset))
+
+						swReader.ReadUInt16()
+
+						swReader.ReadUInt32() //baseClassLo
+						swReader.ReadUInt32() //baseClassHi
+
+						swReader.ReadUInt64()
+
+						swReader.ReadUInt16() //uncompressedSize
+
+						swReader.ReadUInt16()
+						swReader.ReadUInt16()
+
+						swReader.ReadUInt16() //uncompressedOffset
+						if nChng, fndC := checkNodeMatches(relInfo.FileChanges.Nodes, gomName); fndC {
+							fmt.Println("Found Node!")
+							relInfo.NumSuccessful++
+							relInfo.NumNodesSuccessful++
+
+							//replace node here
+							var zipEntr reader.ZipEntry
+							if nChng.IsCompressed {
+								zipEntr, _ = relInfo.ZipReader.ParseZipNode(nChng.Data.File)
+								var err5 error
+								zipEntr.Data, err5 = zlipCompress(zipEntr.Data, relInfo.TmpIdxSub, nChng.Data.File[strings.LastIndex(nChng.Data.File, "\\")+1:], relInfo.ComprCmd)
+								if err5 != nil {
+									log.Panicln(err5)
+								}
+							} else {
+								uncomprFile, err4 := os.Open(nChng.Data.File)
+								if err4 != nil {
+									log.Panicln(err4)
+								}
+								uncomprStat, _ := uncomprFile.Stat()
+								uncomprSize := uncomprStat.Size()
+								uncomprData := make([]byte, uncomprSize)
+								uncomprFile.Read(uncomprData)
+								uncomprFile.Close()
+
+								compressed, err5 := zlipCompress(uncomprData, relInfo.TmpIdxSub, nChng.Data.File[strings.LastIndex(nChng.Data.File, "\\")+1:], relInfo.ComprCmd)
+								if err5 != nil {
+									log.Panicln(err5)
+								}
+								zipEntr = reader.ZipEntry{Name: gomName, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: uncomprSize}
+							}
+							if int(zipEntr.CompressedSize) > int(nodeSize)-int(dataOffset) {
+								log.Panicln("Custom node is too large. Needs to be the same size or smaller.")
+								if relInfo.NumNodesSuccessful == relInfo.NumNodeChanges {
+									swReader.Seek(nodeOffset+((int64(nodeSize)+7)&-8), 0)
+									break
+								} else {
+									continue
+								}
+							}
+							newData := zipEntr.Data[0 : nodeSize-uint32(dataOffset)]
+
+							uncomprSizeArr := make([]byte, 2)
+							binary.LittleEndian.PutUint16(uncomprSizeArr, uint16(zipEntr.UncompressedSize))
+
+							_, err7 := swReader.WriteAt(uncomprSizeArr, nodeOffset+40)
+							if err7 != nil {
+								log.Panicln(err7)
+							}
+
+							swReader.WriteAt(newData, nodeOffset+int64(dataOffset))
+
+							if relInfo.NumNodesSuccessful == relInfo.NumNodeChanges {
+								swReader.Seek(nodeOffset+((int64(nodeSize)+7)&-8), 0)
+								break
+							}
+						}
+						swReader.Seek(nodeOffset+((int64(nodeSize)+7)&-8), 0)
+					}
+
+					swReader.Seek(oldPos, 0)
+					fmt.Println(relInfo.NumSuccessful, relInfo.NumChanges)
+					if relInfo.NumNodesSuccessful == relInfo.NumNodeChanges {
+						break
+					}
+				} else {
+					relInfo.FilesNoHash++
+				}
+			}
 		}
 	}
 	gTor.fileListAppend(archive)
