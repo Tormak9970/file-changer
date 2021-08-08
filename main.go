@@ -98,11 +98,6 @@ func main() {
 		zipReader = reader.ReadZip(zipFilePath)
 	}
 
-	numNodeChanges := len(fileChanges.Nodes)
-	numFileChanges := len(fileChanges.Files)
-	numChanges := numFileChanges + numNodeChanges
-	numSuccessful := 0
-
 	relInf := tor.RelivantInfo{BackupObj: backupObj, FileChanges: fileChanges, ComprCmd: comprCmd, ZipReader: zipReader, FilesNoHash: 0, FilesAttempted: 0, NumNodeChanges: len(fileChanges.Nodes), NumFileChanges: len(fileChanges.Files), NumChanges: len(fileChanges.Nodes) + len(fileChanges.Files), NumNodesSuccessful: 0, NumFilesSuccessful: 0, NumSuccessful: 0, TmpIdxSub: tmpIdxSub}
 
 	s1 := time.Now()
@@ -110,7 +105,7 @@ func main() {
 	d1 := time.Now().Sub(s1)
 	log.Println("duration", fmt.Sprintf("%s", d1))
 
-	if numSuccessful == numChanges {
+	if relInf.NumSuccessful == relInf.NumChanges {
 		os.Exit(0)
 	} else {
 		os.Exit(1)
