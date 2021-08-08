@@ -31,8 +31,6 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		// tempRes := string([]byte(os.Args[1]))
-		// torFiles = append(torFiles, tempRes)
 
 		hashPath = os.Args[2]
 		err2 := json.Unmarshal([]byte(os.Args[3]), &backupObj)
