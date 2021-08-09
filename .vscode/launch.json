@@ -11,14 +11,7 @@
             "request": "launch",
             "mode": "debug",
             "program": "${file}",
-            "args": [
-                "[\"C:\\\\Users\\\\Shane\\\\Desktop\\\\test-tors\\\\swtor_main_art_dynamic_face_a_1.tor\",\"C:\\\\Users\\\\Shane\\\\Desktop\\\\test-tors\\\\swtor_main_art_dynamic_face_b_1.tor\"]",
-                "C:\\\\Users\\\\Shane\\\\Desktop\\\\GUI-Resources\\\\hash\\\\hashes_filename.txt",
-                "{\"backup\":true,\"path\":\"C:\\\\Users\\\\Shane\\\\Desktop\\\\test-output\\\\changer\\\\backups\"}",
-                "{\"files\":[{\"hash\":[\"24BAC134\",\"1B59756A\"],\"data\":{\"file\":\"C:\\\\Users\\\\Shane\\\\Desktop\\\\head_trandoshan_bms_cc_a01_head.gr2\"},\"isCompressed\":false},{\"hash\":[\"53A2AB77\",\"2BE9F3DD\"],\"data\":{\"file\":\"C:\\\\Users\\\\Shane\\\\Desktop\\\\face_bhhelmet19_heavy_bh_a14c01_u.mat\"},\"isCompressed\":false}],\"nodes\":[]}",
-                "C:\\\\Users\\\\Shane\\\\Desktop\\\\GUI-Resources\\\\scripts\\\\IonicCompress.exe",
-                ""
-            ]
+            "args": []
         }
     ]
 }

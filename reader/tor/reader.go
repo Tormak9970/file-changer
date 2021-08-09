@@ -353,9 +353,9 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 							zipEntr = reader.ZipEntry{Name: hashData.Filename, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: uncomprSize}
 						}
 						if zipEntr.CompressedSize <= int64(fileData.CompressedSize) {
-							newData := make([]byte, fileData.CompressedSize-1)
+							newData := make([]byte, fileData.CompressedSize)
 							copy(newData, zipEntr.Data)
-							for k := int(zipEntr.CompressedSize - 1); k < len(newData); k++ {
+							for k := len(newData); k < int(zipEntr.CompressedSize); k++ {
 								newData[k] = 0
 							}
 							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
@@ -375,7 +375,7 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 						}
 						if zipEntr.UncompressedSize <= int64(fileData.UnCompressedSize) {
 							newData := zipEntr.Data
-							for k := len(newData); k < int(fileData.UnCompressedSize-1); k++ {
+							for k := len(newData); k < int(fileData.UnCompressedSize); k++ {
 								newData[k] = 0
 							}
 							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
@@ -407,6 +407,8 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 		}
 		fileTableOffset = tempTableOffset
 	}
+
+	//looking for offset: 115866772
 
 	for k, fileData := range runAfter {
 		zipEntr := runAfterZipEntrs[k]
