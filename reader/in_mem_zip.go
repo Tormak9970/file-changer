@@ -43,7 +43,7 @@ func (self InMemoryZip) ReadAt(offset int64, len int64) []byte {
 func (self InMemoryZip) ParseZipNode(targetFile string) (ZipEntry, error) {
 	for _, file := range self.ZReader.File {
 		if zFI := file.FileInfo(); zFI.Name() == targetFile {
-			comprSize := int64(file.CompressedSize64)
+			comprSize := int64(0)
 			uncomprSize := int64(file.UncompressedSize64)
 			f, err := file.Open()
 			if err != nil {

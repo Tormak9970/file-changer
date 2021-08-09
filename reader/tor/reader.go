@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/Tormak9970/file-changer/logger"
 	"github.com/Tormak9970/file-changer/reader"
@@ -21,12 +20,6 @@ import (
 	"github.com/gammazero/workerpool"
 )
 
-var someMapMutex = sync.RWMutex{}
-
-type torStruct struct {
-	fileList []TorArchiveStruct
-	mutex    sync.RWMutex
-}
 type TorArchiveStruct struct {
 	Name              string
 	FileList          []TorFile
@@ -34,10 +27,6 @@ type TorArchiveStruct struct {
 	NumTables         int
 	LastTableOffset   int64
 	LastTableNumFiles int
-}
-type nodeTorStruct struct {
-	fileList map[string]TorFile
-	mutex    sync.RWMutex
 }
 
 type BackupObj struct {
@@ -204,17 +193,6 @@ func inArr(arr []uint64, val uint64) bool {
 	return false
 }
 
-func (tor *torStruct) fileListAppend(data TorArchiveStruct) {
-	tor.mutex.Lock()
-	tor.fileList = append(tor.fileList, data)
-	tor.mutex.Unlock()
-}
-func (tor *nodeTorStruct) NodeListAppend(key string, data TorFile) {
-	tor.mutex.Lock()
-	tor.fileList[key] = data
-	tor.mutex.Unlock()
-}
-
 var relInfo RelivantInfo
 
 func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]bool, relInf RelivantInfo) RelivantInfo {
@@ -333,12 +311,12 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 
 					if fileData.CompressionMethod == 1 {
 						if fChng.IsCompressed {
-							zipEntr, _ = relInfo.ZipReader.ParseZipFile(fChng.Data.File)
-							var err5 error
-							zipEntr.Data, err5 = zlipCompress(zipEntr.Data, relInfo.TmpIdxSub, fChng.Data.File[strings.LastIndex(fChng.Data.File, "/")+1:], relInfo.ComprCmd)
+							zE, _ := relInfo.ZipReader.ParseZipFile(fChng.Data.File)
+							compressed, err5 := zlipCompress(zE.Data, relInfo.TmpIdxSub, hashData.Filename[strings.LastIndex(hashData.Filename, "/")+1:], relInfo.ComprCmd)
 							if err5 != nil {
 								log.Panicln(err5)
 							}
+							zipEntr = reader.ZipEntry{Name: hashData.Filename, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: zE.UncompressedSize}
 						} else {
 							uncomprFile, _ := os.Open(fChng.Data.File)
 							uncomprStat, _ := uncomprFile.Stat()
@@ -355,7 +333,7 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 						if zipEntr.CompressedSize <= int64(fileData.CompressedSize) {
 							newData := make([]byte, fileData.CompressedSize)
 							copy(newData, zipEntr.Data)
-							for k := len(newData); k < int(zipEntr.CompressedSize); k++ {
+							for k := len(newData); k < int(fileData.CompressedSize); k++ {
 								newData[k] = 0
 							}
 							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
@@ -407,8 +385,6 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 		}
 		fileTableOffset = tempTableOffset
 	}
-
-	//looking for offset: 115866772
 
 	for k, fileData := range runAfter {
 		zipEntr := runAfterZipEntrs[k]
