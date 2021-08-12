@@ -2,7 +2,6 @@ package tor
 
 import (
 	"bytes"
-	"compress/zlib"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -116,22 +115,6 @@ func zlipCompress(buff []byte, output string, filename string, cmd string) ([]by
 
 	return out, nil
 }
-func zlipDecompress(buff []byte) ([]byte, error) {
-	b := bytes.NewReader(buff)
-	r, err := zlib.NewReader(b)
-
-	if err != nil {
-		fmt.Print(err)
-		return nil, err
-	}
-	var out bytes.Buffer
-	io.Copy(&out, r)
-
-	return out.Bytes(), nil
-}
-func fileNameToHash(name string) hash.FileId {
-	return hash.FromFilePath(name, 0)
-}
 func readGOMString(reader reader.SWTORReader, offset uint64) string {
 	var strBuff []byte
 	oldOffset, _ := reader.Seek(0, 1)
@@ -225,9 +208,9 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 	archive := TorArchiveStruct{}
 	archive.Name = torName
 	f, err := os.OpenFile(torName, os.O_RDWR, 0777)
-
-	defer f.Close()
 	logger.Check(err)
+	defer f.Close()
+
 	swReader := reader.SWTORReader{File: f}
 	magicNumber := swReader.ReadUInt32()
 
@@ -333,7 +316,7 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 						if zipEntr.CompressedSize <= int64(fileData.CompressedSize) {
 							newData := make([]byte, fileData.CompressedSize)
 							copy(newData, zipEntr.Data)
-							for k := len(newData); k < int(fileData.CompressedSize); k++ {
+							for k := len(zipEntr.Data); k < int(fileData.CompressedSize); k++ {
 								newData[k] = 0
 							}
 							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
@@ -352,8 +335,9 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 							zipEntr = reader.ZipEntry{Name: hashData.Filename, Data: uncomprData, CompressedSize: 0, UncompressedSize: uncomprSize}
 						}
 						if zipEntr.UncompressedSize <= int64(fileData.UnCompressedSize) {
-							newData := zipEntr.Data
-							for k := len(newData); k < int(fileData.UnCompressedSize); k++ {
+							newData := make([]byte, fileData.UnCompressedSize)
+							copy(newData, zipEntr.Data)
+							for k := len(zipEntr.Data); k < int(fileData.UnCompressedSize); k++ {
 								newData[k] = 0
 							}
 							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
@@ -440,9 +424,9 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 			binary.LittleEndian.PutUint32(comprDatSizeBytes, uint32(zipEntr.CompressedSize))
 			swReader.Write(comprDatSizeBytes)
 		} else {
-			comprDatSizeBytes := make([]byte, 4)
-			binary.LittleEndian.PutUint32(comprDatSizeBytes, uint32(zipEntr.UncompressedSize))
-			swReader.Write(comprDatSizeBytes)
+			uncomprDatSizeBytes := make([]byte, 4)
+			binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
+			swReader.Write(uncomprDatSizeBytes)
 		}
 
 		uncomprDatSizeBytes := make([]byte, 4)
@@ -470,9 +454,8 @@ func readNodeTor(torName string, nodeHashes map[string]bool) {
 	archive := TorArchiveStruct{}
 	archive.Name = torName
 	f, err := os.OpenFile(torName, os.O_RDWR, os.ModePerm)
-
-	defer f.Close()
 	logger.Check(err)
+	defer f.Close()
 
 	swReader := reader.SWTORReader{File: f}
 	magicNumber := swReader.ReadUInt32()

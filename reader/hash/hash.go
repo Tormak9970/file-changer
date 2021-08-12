@@ -107,7 +107,7 @@ func FromFilePath(filePath string, seed uint32) FileId {
 			esi += uint32(int32(s[i+9]) << 8)
 			fallthrough
 		case 9:
-			esi += uint32(s[i+8]) //I added this, not sure if it works
+			esi += uint32(s[i+8])
 			fallthrough
 		case 8:
 			edi += uint32(int32(s[i+7]) << 24)
@@ -119,7 +119,7 @@ func FromFilePath(filePath string, seed uint32) FileId {
 			edi += uint32(int32(s[i+5]) << 8)
 			fallthrough
 		case 5:
-			edi += uint32(s[i+4]) //I added this, not sure if it works
+			edi += uint32(s[i+4])
 			fallthrough
 		case 4:
 			ebx += uint32(int32(s[i+3]) << 24)
@@ -131,7 +131,7 @@ func FromFilePath(filePath string, seed uint32) FileId {
 			ebx += uint32(int32(s[i+1]) << 8)
 			fallthrough
 		case 1:
-			ebx += uint32(s[i]) //I added this, not sure if it works
+			ebx += uint32(s[i])
 		}
 
 		esi = (esi ^ edi) - ((edi >> 18) ^ (edi << 14))

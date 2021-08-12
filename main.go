@@ -33,15 +33,25 @@ func main() {
 		}
 
 		hashPath = os.Args[2]
+
 		err2 := json.Unmarshal([]byte(os.Args[3]), &backupObj)
 		if err2 != nil {
 			fmt.Println(err2)
 		}
-		err3 := json.Unmarshal([]byte(os.Args[4]), &fileChanges)
+
+		changesJson := os.Args[4]
+		changesDat, err25 := os.ReadFile(changesJson)
+		if err25 != nil {
+			fmt.Println(err25)
+		}
+		err3 := json.Unmarshal(changesDat, &fileChanges)
 		if err3 != nil {
 			fmt.Println(err3)
 		}
+		//os.Remove(changesJson)
+
 		comprCmd = os.Args[5]
+
 		if len(os.Args) > 6 {
 			zipFilePath = os.Args[6]
 		} else {
@@ -100,7 +110,7 @@ func main() {
 
 	s1 := time.Now()
 	relInf = tor.ReadAll(torFiles, hashes, nodeHashes, relInf)
-	d1 := time.Now().Sub(s1)
+	d1 := time.Since(s1)
 	log.Println("duration", fmt.Sprintf("%s", d1))
 
 	if relInf.NumSuccessful == relInf.NumChanges {
