@@ -13,5 +13,4 @@ type TorFile struct {
 	CRC               uint32 // Same as logger.Checksum
 	TorFile           string
 	TableIdx          int32
-	HeaderOffset      int64
 }

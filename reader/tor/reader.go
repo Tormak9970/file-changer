@@ -9,14 +9,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/Tormak9970/file-changer/logger"
 	"github.com/Tormak9970/file-changer/reader"
 	"github.com/Tormak9970/file-changer/reader/hash"
-	"github.com/gammazero/workerpool"
 )
 
 type TorArchiveStruct struct {
@@ -54,7 +52,6 @@ type RelivantInfo struct {
 	BackupObj          BackupObj
 	FileChanges        Changes
 	ComprCmd           string
-	ZipReader          reader.InMemoryZip
 	FilesNoHash        int
 	FilesAttempted     int
 	NumNodeChanges     int
@@ -167,9 +164,9 @@ func fCopy(src, dst string) (int64, error) {
 	}
 	return 0, err
 }
-func inArr(arr []uint64, val uint64) bool {
-	for _, v := range arr {
-		if v == val {
+func inHashArr(change FileChange, foundHashes []hash.HashData) bool {
+	for _, hash := range foundHashes {
+		if change.Hash[0] == hash.PH && change.Hash[1] == hash.SH {
 			return true
 		}
 	}
@@ -180,22 +177,24 @@ var relInfo RelivantInfo
 
 func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]bool, relInf RelivantInfo) RelivantInfo {
 	relInfo = relInf
-	pool := workerpool.New(runtime.NumCPU())
+	// pool := workerpool.New(runtime.NumCPU())
 
 	for _, torName := range torNames {
 		torName := torName
 
 		if strings.Contains(torName, "main_global_1.tor") {
-			pool.Submit(func() {
-				readNodeTor(torName, nodeHashes)
-			})
+			// pool.Submit(func() {
+			// 	readNodeTor(torName, nodeHashes)
+			// })
 		} else {
-			pool.Submit(func() {
-				read(torName, hashes)
-			})
+			read(torName, hashes)
+			// commented out for debugging purposes
+			// pool.Submit(func() {
+			// 	read(torName, hashes)
+			// })
 		}
 	}
-	pool.StopWait()
+	// pool.StopWait()
 
 	return relInfo
 }
@@ -228,26 +227,25 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 
 	hasBackedUp := false
 
-	var runAfter []TorFile
-	var runAfterZipEntrs []reader.ZipEntry
+	fileHashes := make([]hash.HashData, 0)
+	fileMatches := make([]TorFile, 0)
 
-	foundHashes := make([]uint64, 0)
+	tableOffsets := make([]uint64, 0)
 
 	for fileTableOffset != 0 {
 		archive.NumTables++
 		swReader.Seek(int64(fileTableOffset), 0)
 		numFiles := int32(swReader.ReadUInt32())
 		tempTableOffset := swReader.ReadUInt64()
+		tableOffsets = append(tableOffsets, tempTableOffset)
 		namedFiles += int(numFiles)
 		for i := int32(0); i < numFiles; i++ {
-			debugOffset, _ := swReader.Seek(0, 1)
 			offset := swReader.ReadUInt64()
 			if offset == 0 {
 				swReader.Seek(26, 1)
 				continue
 			}
 			fileData := TorFile{}
-			fileData.HeaderOffset = debugOffset
 			fileData.HeaderSize = swReader.ReadUInt32()
 			fileData.Offset = offset
 			fileData.CompressedSize = swReader.ReadUInt32()
@@ -270,92 +268,9 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 				relInfo.FilesAttempted++
 				hashData := hashData
 				fileData := fileData
-				if fChng, fndChng := checkFileMatch(relInfo.FileChanges.Files, hashData); fndChng && relInfo.NumFilesSuccessful < relInfo.NumFileChanges {
-					if inArr(foundHashes, fileData.FileID) {
-						zeros := make([]byte, 34)
-						swReader.WriteAt(zeros, fileData.HeaderOffset)
-						continue
-					} else {
-						foundHashes = append(foundHashes, fileData.FileID)
-					}
-					swReader.Seek(0, 0)
-					if relInfo.BackupObj.Backup && !hasBackedUp {
-						fCopy(fileData.TorFile, relInfo.BackupObj.Path+fileData.TorFile[strings.LastIndex(fileData.TorFile, "\\"):])
-						hasBackedUp = true
-					}
-					log.Println("Found file. File num", relInfo.NumSuccessful)
-					relInfo.NumSuccessful++
-					relInfo.NumFilesSuccessful++
-
-					//replace file data here
-
-					var zipEntr reader.ZipEntry
-					hasInserted := false
-
-					if fileData.CompressionMethod == 1 {
-						if fChng.IsCompressed {
-							zE, _ := relInfo.ZipReader.ParseZipFile(fChng.Data.File)
-							compressed, err5 := zlipCompress(zE.Data, relInfo.TmpIdxSub, hashData.Filename[strings.LastIndex(hashData.Filename, "/")+1:], relInfo.ComprCmd)
-							if err5 != nil {
-								log.Panicln(err5)
-							}
-							zipEntr = reader.ZipEntry{Name: hashData.Filename, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: zE.UncompressedSize}
-						} else {
-							uncomprFile, _ := os.Open(fChng.Data.File)
-							uncomprStat, _ := uncomprFile.Stat()
-							uncomprSize := uncomprStat.Size()
-							uncomprData := make([]byte, uncomprSize)
-							uncomprFile.Read(uncomprData)
-							uncomprFile.Close()
-							compressed, err4 := zlipCompress(uncomprData, relInfo.TmpIdxSub, hashData.Filename[strings.LastIndex(hashData.Filename, "/")+1:], relInfo.ComprCmd)
-							if err4 != nil {
-								log.Panicln(err4)
-							}
-							zipEntr = reader.ZipEntry{Name: hashData.Filename, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: uncomprSize}
-						}
-						if zipEntr.CompressedSize <= int64(fileData.CompressedSize) {
-							newData := make([]byte, fileData.CompressedSize)
-							copy(newData, zipEntr.Data)
-							for k := len(zipEntr.Data); k < int(fileData.CompressedSize); k++ {
-								newData[k] = 0
-							}
-							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
-							hasInserted = true
-						}
-					} else if fileData.CompressionMethod == 0 {
-						if fChng.IsCompressed {
-							zipEntr, _ = relInfo.ZipReader.ParseZipFile(fChng.Data.File)
-						} else {
-							uncomprFile, _ := os.Open(fChng.Data.File)
-							uncomprStat, _ := uncomprFile.Stat()
-							uncomprSize := uncomprStat.Size()
-							uncomprData := make([]byte, uncomprSize)
-							uncomprFile.Read(uncomprData)
-							uncomprFile.Close()
-							zipEntr = reader.ZipEntry{Name: hashData.Filename, Data: uncomprData, CompressedSize: 0, UncompressedSize: uncomprSize}
-						}
-						if zipEntr.UncompressedSize <= int64(fileData.UnCompressedSize) {
-							newData := make([]byte, fileData.UnCompressedSize)
-							copy(newData, zipEntr.Data)
-							for k := len(zipEntr.Data); k < int(fileData.UnCompressedSize); k++ {
-								newData[k] = 0
-							}
-							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
-							hasInserted = true
-						}
-					} else {
-						log.Panicln("Expected 0 or 1 but got", fileData.CompressionMethod)
-					}
-
-					fmt.Println(relInfo.NumSuccessful, relInfo.NumChanges)
-					if !hasInserted {
-						runAfter = append(runAfter, fileData)
-						runAfterZipEntrs = append(runAfterZipEntrs, zipEntr)
-					} else {
-						if relInfo.NumFilesSuccessful == relInfo.NumFileChanges {
-							break
-						}
-					}
+				if _, fndChng := checkFileMatch(relInfo.FileChanges.Files, hashData); fndChng && relInfo.NumFilesSuccessful < relInfo.NumFileChanges {
+					fileMatches = append(fileMatches, fileData)
+					fileHashes = append(fileHashes, hashData)
 				}
 			} else {
 				relInfo.FilesNoHash++
@@ -370,80 +285,160 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 		fileTableOffset = tempTableOffset
 	}
 
-	for k, fileData := range runAfter {
-		zipEntr := runAfterZipEntrs[k]
-		if archive.LastTableNumFiles+1 >= 1000 {
-			newLastOffset, _ := swReader.Seek(0, 2)
+	for _, fChng := range relInfo.FileChanges.Files {
+		if inHashArr(fChng, fileHashes) {
+			hasInserted := false
 
-			capacity := make([]byte, 32)
-			binary.LittleEndian.PutUint32(capacity, uint32(1000))
-			swReader.Write(capacity)
-
-			nextOffset := make([]byte, 4)
-			binary.LittleEndian.PutUint64(capacity, uint64(0))
-			swReader.Write(nextOffset)
-
-			for g := 0; g < 1000; g++ {
-				zeros := make([]byte, 34)
-				swReader.Write(zeros)
+			fileEntries := make([]TorFile, 0)
+			for i, torFile := range fileMatches {
+				hashes := fileHashes[i]
+				if fChng.Hash[0] == hashes.PH && fChng.Hash[1] == hashes.SH {
+					fileEntries = append(fileEntries, torFile)
+				}
 			}
 
-			byteOffset := make([]byte, 8)
-			binary.LittleEndian.PutUint64(byteOffset, uint64(newLastOffset))
-			swReader.WriteAt(byteOffset, archive.LastTableOffset+4)
+			swReader.Seek(0, 0)
+			if relInfo.BackupObj.Backup && !hasBackedUp {
+				fCopy(archive.Name, relInfo.BackupObj.Path+archive.Name[strings.LastIndex(archive.Name, "\\"):])
+				hasBackedUp = true
+			}
+			log.Println("Found file. File num", relInfo.NumSuccessful)
 
-			archive.LastTableNumFiles = -1
-			archive.LastTableOffset = newLastOffset
+			//replace file data here
+
+			var zipEntr reader.ZipEntry
+
+			for i, fileData := range fileEntries {
+				hashData := fileHashes[i]
+				if !hasInserted {
+					if fileData.CompressionMethod == 1 {
+						uncomprFile, _ := os.Open(fChng.Data.File)
+						uncomprStat, _ := uncomprFile.Stat()
+						uncomprSize := uncomprStat.Size()
+						uncomprData := make([]byte, uncomprSize)
+						uncomprFile.Read(uncomprData)
+						uncomprFile.Close()
+						compressed, err4 := zlipCompress(uncomprData, relInfo.TmpIdxSub, hashData.Filename[strings.LastIndex(hashData.Filename, "/")+1:], relInfo.ComprCmd)
+						if err4 != nil {
+							log.Panicln(err4)
+						}
+						zipEntr = reader.ZipEntry{Name: fChng.Data.File, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: uncomprSize}
+						if zipEntr.CompressedSize <= int64(fileData.CompressedSize) {
+							newData := make([]byte, fileData.CompressedSize)
+							copy(newData, zipEntr.Data)
+							for k := len(zipEntr.Data); k < int(fileData.CompressedSize); k++ {
+								newData[k] = 0
+							}
+							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
+							hasInserted = true
+						}
+					} else if fileData.CompressionMethod == 0 {
+						uncomprFile, _ := os.Open(fChng.Data.File)
+						uncomprStat, _ := uncomprFile.Stat()
+						uncomprSize := uncomprStat.Size()
+						uncomprData := make([]byte, uncomprSize)
+						uncomprFile.Read(uncomprData)
+						uncomprFile.Close()
+						zipEntr = reader.ZipEntry{Name: fChng.Data.File, Data: uncomprData, CompressedSize: 0, UncompressedSize: uncomprSize}
+						if zipEntr.UncompressedSize <= int64(fileData.UnCompressedSize) {
+							newData := make([]byte, fileData.UnCompressedSize)
+							copy(newData, zipEntr.Data)
+							for k := len(zipEntr.Data); k < int(fileData.UnCompressedSize); k++ {
+								newData[k] = 0
+							}
+							swReader.WriteAt(newData, int64(fileData.Offset)+int64(fileData.HeaderSize))
+							hasInserted = true
+						}
+					} else {
+						log.Panicln("Expected 0 or 1 but got", fileData.CompressionMethod)
+					}
+				} else {
+					offset := tableOffsets[i] + uint64(34*fileData.TableIdx)
+					zeros := make([]byte, 34)
+					swReader.WriteAt(zeros, int64(offset))
+				}
+			}
+
+			if !hasInserted {
+				if archive.LastTableNumFiles+1 >= 1000 {
+					newLastOffset, _ := swReader.Seek(0, 2)
+
+					capacity := make([]byte, 32)
+					binary.LittleEndian.PutUint32(capacity, uint32(1000))
+					swReader.Write(capacity)
+
+					nextOffset := make([]byte, 4)
+					binary.LittleEndian.PutUint64(capacity, uint64(0))
+					swReader.Write(nextOffset)
+
+					for g := 0; g < 1000; g++ {
+						zeros := make([]byte, 34)
+						swReader.Write(zeros)
+					}
+
+					byteOffset := make([]byte, 8)
+					binary.LittleEndian.PutUint64(byteOffset, uint64(newLastOffset))
+					swReader.WriteAt(byteOffset, archive.LastTableOffset+4)
+
+					archive.LastTableNumFiles = -1
+					archive.LastTableOffset = newLastOffset
+				}
+
+				fileData := fileEntries[0]
+
+				modFileOffset, _ := swReader.Seek(0, 2)
+
+				//append modded file to the end of the archive
+				metaData := make([]byte, fileData.HeaderSize)
+				swReader.Seek(int64(fileData.Offset), 0)
+				swReader.Read(metaData)
+
+				swReader.Seek(modFileOffset, 0)
+				swReader.Write(metaData)
+				swReader.Write(zipEntr.Data)
+
+				//add file table entry
+				archive.LastTableNumFiles++
+				swReader.Seek(archive.LastTableOffset+12+int64(34*archive.LastTableNumFiles), 0)
+
+				modFileOffBytes := make([]byte, 8)
+				binary.LittleEndian.PutUint64(modFileOffBytes, uint64(modFileOffset))
+				swReader.Write(modFileOffBytes)
+
+				metDatSizeBytes := make([]byte, 4)
+				binary.LittleEndian.PutUint32(metDatSizeBytes, fileData.HeaderSize)
+				swReader.Write(metDatSizeBytes)
+
+				if fileData.CompressionMethod == 1 {
+					comprDatSizeBytes := make([]byte, 4)
+					binary.LittleEndian.PutUint32(comprDatSizeBytes, uint32(zipEntr.CompressedSize))
+					swReader.Write(comprDatSizeBytes)
+				} else {
+					uncomprDatSizeBytes := make([]byte, 4)
+					binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
+					swReader.Write(uncomprDatSizeBytes)
+				}
+
+				uncomprDatSizeBytes := make([]byte, 4)
+				binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
+				swReader.Write(uncomprDatSizeBytes)
+
+				hashBytes := make([]byte, 8)
+				binary.LittleEndian.PutUint64(hashBytes, fileData.FileID)
+				swReader.Write(hashBytes)
+
+				chckSumBytes := make([]byte, 4)
+				binary.LittleEndian.PutUint32(chckSumBytes, fileData.Checksum)
+				swReader.Write(chckSumBytes)
+
+				compTypeBytes := make([]byte, 2)
+				binary.LittleEndian.PutUint16(compTypeBytes, fileData.CompressionMethod)
+				swReader.Write(compTypeBytes)
+			}
+			relInfo.NumSuccessful++
+			relInfo.NumFilesSuccessful++
+			fmt.Println(relInfo.NumSuccessful, relInfo.NumChanges)
 		}
-
-		modFileOffset, _ := swReader.Seek(0, 2)
-
-		//append modded file to the end of the archive
-		metaData := make([]byte, fileData.HeaderSize)
-		swReader.Seek(int64(fileData.Offset), 0)
-		swReader.Read(metaData)
-
-		swReader.Seek(modFileOffset, 0)
-		swReader.Write(metaData)
-		swReader.Write(zipEntr.Data)
-
-		//add file table entry
-		archive.LastTableNumFiles++
-		swReader.Seek(archive.LastTableOffset+12+int64(34*archive.LastTableNumFiles), 0)
-
-		modFileOffBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(modFileOffBytes, uint64(modFileOffset))
-		swReader.Write(modFileOffBytes)
-
-		metDatSizeBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(metDatSizeBytes, fileData.HeaderSize)
-		swReader.Write(metDatSizeBytes)
-
-		if fileData.CompressionMethod == 1 {
-			comprDatSizeBytes := make([]byte, 4)
-			binary.LittleEndian.PutUint32(comprDatSizeBytes, uint32(zipEntr.CompressedSize))
-			swReader.Write(comprDatSizeBytes)
-		} else {
-			uncomprDatSizeBytes := make([]byte, 4)
-			binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
-			swReader.Write(uncomprDatSizeBytes)
-		}
-
-		uncomprDatSizeBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
-		swReader.Write(uncomprDatSizeBytes)
-
-		hashBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(hashBytes, fileData.FileID)
-		swReader.Write(hashBytes)
-
-		chckSumBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(chckSumBytes, fileData.Checksum)
-		swReader.Write(chckSumBytes)
-
-		compTypeBytes := make([]byte, 2)
-		binary.LittleEndian.PutUint16(compTypeBytes, fileData.CompressionMethod)
-		swReader.Write(compTypeBytes)
 	}
 }
 func readNodeTor(torName string, nodeHashes map[string]bool) {
@@ -480,7 +475,6 @@ func readNodeTor(torName string, nodeHashes map[string]bool) {
 		placeHolder := TorFile{}
 		placeHolder.TorFile = torName
 		for i := int32(0); i < numFiles; i++ {
-			//fmt.Println(i, numFiles)
 			offset := swReader.ReadUInt64()
 			if offset == 0 {
 				f.Seek(26, 1)
@@ -560,30 +554,21 @@ func readNodeTor(torName string, nodeHashes map[string]bool) {
 
 							//replace node here
 							var zipEntr reader.ZipEntry
-							if nChng.IsCompressed {
-								zipEntr, _ = relInfo.ZipReader.ParseZipNode(nChng.Data.File)
-								var err5 error
-								zipEntr.Data, err5 = zlipCompress(zipEntr.Data, relInfo.TmpIdxSub, nChng.Data.File[strings.LastIndex(nChng.Data.File, "\\")+1:], relInfo.ComprCmd)
-								if err5 != nil {
-									log.Panicln(err5)
-								}
-							} else {
-								uncomprFile, err4 := os.Open(nChng.Data.File)
-								if err4 != nil {
-									log.Panicln(err4)
-								}
-								uncomprStat, _ := uncomprFile.Stat()
-								uncomprSize := uncomprStat.Size()
-								uncomprData := make([]byte, uncomprSize)
-								uncomprFile.Read(uncomprData)
-								uncomprFile.Close()
-
-								compressed, err5 := zlipCompress(uncomprData, relInfo.TmpIdxSub, nChng.Data.File[strings.LastIndex(nChng.Data.File, "\\")+1:], relInfo.ComprCmd)
-								if err5 != nil {
-									log.Panicln(err5)
-								}
-								zipEntr = reader.ZipEntry{Name: gomName, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: uncomprSize}
+							uncomprFile, err4 := os.Open(nChng.Data.File)
+							if err4 != nil {
+								log.Panicln(err4)
 							}
+							uncomprStat, _ := uncomprFile.Stat()
+							uncomprSize := uncomprStat.Size()
+							uncomprData := make([]byte, uncomprSize)
+							uncomprFile.Read(uncomprData)
+							uncomprFile.Close()
+
+							compressed, err5 := zlipCompress(uncomprData, relInfo.TmpIdxSub, nChng.Data.File[strings.LastIndex(nChng.Data.File, "\\")+1:], relInfo.ComprCmd)
+							if err5 != nil {
+								log.Panicln(err5)
+							}
+							zipEntr = reader.ZipEntry{Name: gomName, Data: compressed, CompressedSize: int64(len(compressed)), UncompressedSize: uncomprSize}
 							if int(zipEntr.CompressedSize) > int(nodeSize)-int(dataOffset) {
 								log.Panicln("Custom node is too large. Needs to be the same size or smaller.")
 								if relInfo.NumNodesSuccessful == relInfo.NumNodeChanges {
