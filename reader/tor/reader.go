@@ -9,12 +9,14 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/Tormak9970/file-changer/logger"
 	"github.com/Tormak9970/file-changer/reader"
 	"github.com/Tormak9970/file-changer/reader/hash"
+	"github.com/gammazero/workerpool"
 )
 
 type TorArchiveStruct struct {
@@ -173,28 +175,32 @@ func inHashArr(change FileChange, foundHashes []hash.HashData) bool {
 	return false
 }
 
+func swap(files *[]FileChange) {
+	for i := 0; i < int(len(*files)/2); i++ {
+		(*files)[i], (*files)[len(*files)-1-i] = (*files)[len(*files)-1-i], (*files)[i]
+	}
+}
+
 var relInfo RelivantInfo
 
 func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]bool, relInf RelivantInfo) RelivantInfo {
 	relInfo = relInf
-	// pool := workerpool.New(runtime.NumCPU())
+	pool := workerpool.New(runtime.NumCPU())
 
 	for _, torName := range torNames {
 		torName := torName
 
 		if strings.Contains(torName, "main_global_1.tor") {
-			// pool.Submit(func() {
-			// 	readNodeTor(torName, nodeHashes)
-			// })
+			pool.Submit(func() {
+				readNodeTor(torName, nodeHashes)
+			})
 		} else {
-			read(torName, hashes)
-			// commented out for debugging purposes
-			// pool.Submit(func() {
-			// 	read(torName, hashes)
-			// })
+			pool.Submit(func() {
+				read(torName, hashes)
+			})
 		}
 	}
-	// pool.StopWait()
+	pool.StopWait()
 
 	return relInfo
 }
@@ -285,14 +291,19 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 		fileTableOffset = tempTableOffset
 	}
 
+	swap(&relInfo.FileChanges.Files)
+
 	for _, fChng := range relInfo.FileChanges.Files {
 		if inHashArr(fChng, fileHashes) {
 			hasInserted := false
 
 			fileEntries := make([]TorFile, 0)
-			for i, torFile := range fileMatches {
-				hashes := fileHashes[i]
-				if fChng.Hash[0] == hashes.PH && fChng.Hash[1] == hashes.SH {
+			for _, torFile := range fileMatches {
+				fileID, err := strconv.ParseUint(fChng.Hash[0]+fChng.Hash[1], 16, 64)
+				if err != nil {
+					log.Panicln(err)
+				}
+				if fileID == torFile.FileID {
 					fileEntries = append(fileEntries, torFile)
 				}
 			}
@@ -404,10 +415,14 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 				modFileOffBytes := make([]byte, 8)
 				binary.LittleEndian.PutUint64(modFileOffBytes, uint64(modFileOffset))
 				swReader.Write(modFileOffBytes)
+				t1, _ := swReader.Seek(0, 1)
+				fmt.Println(t1)
 
 				metDatSizeBytes := make([]byte, 4)
 				binary.LittleEndian.PutUint32(metDatSizeBytes, fileData.HeaderSize)
 				swReader.Write(metDatSizeBytes)
+				t2, _ := swReader.Seek(0, 1)
+				fmt.Println(t2)
 
 				if fileData.CompressionMethod == 1 {
 					comprDatSizeBytes := make([]byte, 4)
@@ -418,22 +433,32 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 					binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
 					swReader.Write(uncomprDatSizeBytes)
 				}
+				t3, _ := swReader.Seek(0, 1)
+				fmt.Println(t3)
 
 				uncomprDatSizeBytes := make([]byte, 4)
 				binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
 				swReader.Write(uncomprDatSizeBytes)
+				t4, _ := swReader.Seek(0, 1)
+				fmt.Println(t4)
 
 				hashBytes := make([]byte, 8)
 				binary.LittleEndian.PutUint64(hashBytes, fileData.FileID)
 				swReader.Write(hashBytes)
+				t5, _ := swReader.Seek(0, 1)
+				fmt.Println(t5)
 
 				chckSumBytes := make([]byte, 4)
 				binary.LittleEndian.PutUint32(chckSumBytes, fileData.Checksum)
 				swReader.Write(chckSumBytes)
+				t6, _ := swReader.Seek(0, 1)
+				fmt.Println(t6)
 
 				compTypeBytes := make([]byte, 2)
 				binary.LittleEndian.PutUint16(compTypeBytes, fileData.CompressionMethod)
 				swReader.Write(compTypeBytes)
+				t7, _ := swReader.Seek(0, 1)
+				fmt.Println(t7)
 			}
 			relInfo.NumSuccessful++
 			relInfo.NumFilesSuccessful++
