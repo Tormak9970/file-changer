@@ -266,6 +266,7 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 			fileData.CRC = fileData.Checksum
 			fileData.TorFile = torName
 			fileData.TableIdx = i
+			fileData.Table = int32(archive.NumTables)
 			lastFile = int(i)
 
 			restorePos, _ := swReader.Seek(0, 1)
@@ -364,7 +365,7 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 						log.Panicln("Expected 0 or 1 but got", fileData.CompressionMethod)
 					}
 				} else {
-					offset := tableOffsets[i] + uint64(34*fileData.TableIdx)
+					offset := tableOffsets[fileData.Table] + uint64(34*fileData.TableIdx)
 					zeros := make([]byte, 34)
 					swReader.WriteAt(zeros, int64(offset))
 				}
