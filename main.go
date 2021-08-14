@@ -120,7 +120,7 @@ func main() {
 		if err3 != nil {
 			fmt.Println(err3)
 		}
-		//os.Remove(changesJson)
+		os.Remove(changesJson)
 
 		comprCmd = os.Args[5]
 
