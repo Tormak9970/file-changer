@@ -9,14 +9,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/Tormak9970/file-changer/logger"
 	"github.com/Tormak9970/file-changer/reader"
 	"github.com/Tormak9970/file-changer/reader/hash"
-	"github.com/gammazero/workerpool"
 )
 
 type TorArchiveStruct struct {
@@ -185,22 +183,24 @@ var relInfo RelivantInfo
 
 func ReadAll(torNames []string, hashes map[uint64]hash.HashData, nodeHashes map[string]bool, relInf RelivantInfo) RelivantInfo {
 	relInfo = relInf
-	pool := workerpool.New(runtime.NumCPU())
+	//pool := workerpool.New(runtime.NumCPU())
 
 	for _, torName := range torNames {
 		torName := torName
 
 		if strings.Contains(torName, "main_global_1.tor") {
-			pool.Submit(func() {
-				readNodeTor(torName, nodeHashes)
-			})
+			readNodeTor(torName, nodeHashes)
+			// pool.Submit(func() {
+			// 	readNodeTor(torName, nodeHashes)
+			// })
 		} else {
-			pool.Submit(func() {
-				read(torName, hashes)
-			})
+			read(torName, hashes)
+			// pool.Submit(func() {
+
+			// })
 		}
 	}
-	pool.StopWait()
+	//pool.StopWait()
 
 	return relInfo
 }
@@ -292,8 +292,8 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 		fileTableOffset = tempTableOffset
 	}
 
+	// Dont edit, confirmed this works
 	swap(&relInfo.FileChanges.Files)
-
 	for _, fChng := range relInfo.FileChanges.Files {
 		if inHashArr(fChng, fileHashes) {
 			hasInserted := false
