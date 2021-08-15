@@ -325,6 +325,7 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 				if !hasInserted {
 					if fileData.CompressionMethod == 1 {
 						uncomprFile, _ := os.Open(fChng.Data.File)
+						fmt.Println(fChng.Data.File)
 						uncomprStat, _ := uncomprFile.Stat()
 						uncomprSize := uncomprStat.Size()
 						uncomprData := make([]byte, uncomprSize)
@@ -416,14 +417,10 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 				modFileOffBytes := make([]byte, 8)
 				binary.LittleEndian.PutUint64(modFileOffBytes, uint64(modFileOffset))
 				swReader.Write(modFileOffBytes)
-				t1, _ := swReader.Seek(0, 1)
-				fmt.Println(t1)
 
 				metDatSizeBytes := make([]byte, 4)
 				binary.LittleEndian.PutUint32(metDatSizeBytes, fileData.HeaderSize)
 				swReader.Write(metDatSizeBytes)
-				t2, _ := swReader.Seek(0, 1)
-				fmt.Println(t2)
 
 				if fileData.CompressionMethod == 1 {
 					comprDatSizeBytes := make([]byte, 4)
@@ -434,32 +431,22 @@ func read(torName string, hashes map[uint64]hash.HashData) {
 					binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
 					swReader.Write(uncomprDatSizeBytes)
 				}
-				t3, _ := swReader.Seek(0, 1)
-				fmt.Println(t3)
 
 				uncomprDatSizeBytes := make([]byte, 4)
 				binary.LittleEndian.PutUint32(uncomprDatSizeBytes, uint32(zipEntr.UncompressedSize))
 				swReader.Write(uncomprDatSizeBytes)
-				t4, _ := swReader.Seek(0, 1)
-				fmt.Println(t4)
 
 				hashBytes := make([]byte, 8)
 				binary.LittleEndian.PutUint64(hashBytes, fileData.FileID)
 				swReader.Write(hashBytes)
-				t5, _ := swReader.Seek(0, 1)
-				fmt.Println(t5)
 
 				chckSumBytes := make([]byte, 4)
 				binary.LittleEndian.PutUint32(chckSumBytes, fileData.Checksum)
 				swReader.Write(chckSumBytes)
-				t6, _ := swReader.Seek(0, 1)
-				fmt.Println(t6)
 
 				compTypeBytes := make([]byte, 2)
 				binary.LittleEndian.PutUint16(compTypeBytes, fileData.CompressionMethod)
 				swReader.Write(compTypeBytes)
-				t7, _ := swReader.Seek(0, 1)
-				fmt.Println(t7)
 			}
 			relInfo.NumSuccessful++
 			relInfo.NumFilesSuccessful++

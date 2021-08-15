@@ -56,9 +56,11 @@ func preprocessZip(changes *tor.Changes, zipPath string, destDir string) error {
 			return err4
 		}
 
-		err5 := updateChanges(changes, newPath)
-		if err5 != nil {
-			return err5
+		if file.Name != "Changes.json" {
+			err5 := updateChanges(changes, newPath)
+			if err5 != nil {
+				return err5
+			}
 		}
 	}
 
@@ -67,17 +69,17 @@ func preprocessZip(changes *tor.Changes, zipPath string, destDir string) error {
 
 func updateChanges(changes *tor.Changes, newPath string) error {
 	if filepath.Ext(newPath) == ".node" {
-		for i, node := range (*changes).Nodes {
-			if filepath.Base(node.Data.File) == filepath.Base(newPath) {
-				(*changes).Nodes[i].Data.File = newPath
-				break
+		for i := range (*changes).Nodes {
+			if filepath.Base((*changes).Nodes[i].Data.File) == filepath.Base(newPath) {
+				(*changes).Nodes[i].Data.File = filepath.Join()
 			}
 		}
 	} else {
-		for i, file := range (*changes).Files {
-			if filepath.Base(file.Data.File) == filepath.Base(newPath) {
+		for i := range (*changes).Files {
+			if filepath.Base((*changes).Files[i].Data.File) == filepath.Base(newPath) {
 				(*changes).Files[i].Data.File = newPath
-				break
+				fmt.Println((*changes).Files[i].Data.File)
+				fmt.Println("placeholder break")
 			}
 		}
 	}
@@ -120,7 +122,7 @@ func main() {
 		if err3 != nil {
 			fmt.Println(err3)
 		}
-		//os.Remove(changesJson)
+		os.Remove(changesJson)
 
 		comprCmd = os.Args[5]
 
